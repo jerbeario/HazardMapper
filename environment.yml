@@ -1,0 +1,23 @@
+name: HazardMapper
+channels:
+  - conda-forge
+  - pytorch
+  - defaults
+dependencies:
+  - python=3.12
+  - cartopy
+  - scikit-learn
+  - pandas
+  - matplotlib
+  - seaborn
+  - numpy<2
+  - jupyter
+  - libgdal
+  - gdal
+  - geopandas
+  - rasterio
+  - pytorch=2.2.2
+  - shap
+  - jenkspy
+  - onnx
+prefix: /Users/jeremypalmerio/opt/miniconda3/envs/HazardMapper
