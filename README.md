@@ -128,21 +128,7 @@ The module uses Python’s `argparse` to define command-line arguments that let 
 - `-z`/`--hazard` specifies the hazard type (e.g., flood, wildfire, landslide) for which the partition map is generated.
 - `-n`/`--n_samples` sets the number of samples to downsample the partition map, with a default of 1,000,000.
 
-## Contributing
-
-Contributions are welcome! If you would like to improve or extend HazardMapper, please fork the repository and create a pull request with your changes.
 
 ## License
 
 HazardMapper is open source and available under the [The GNU General Public License v3.0](LICENSE).
-
-## Acknowledgements
-
-Thank you to all the contributors and the open-source community for their support in developing HazardMapper.
-````
-
-This addition completes your README with a detailed partition module description, as well as contribution, license, and acknowledgements sections.
-
-
-
-
