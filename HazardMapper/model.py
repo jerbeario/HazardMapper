@@ -66,7 +66,7 @@ class Baseline:
     Only supports patch_size=1 (pixel-wise classification). 
 
     """
-    def __init__(self, hazard, architecture, variables, output_path, logger, seed, downscale=False):
+    def __init__(self, hazard, architecture, variables, output_path, logger, seed):
 
         self.hazard = hazard.lower()
         self.architecture = architecture
@@ -75,12 +75,7 @@ class Baseline:
         self.logger = logger
         self.variables = variables
         self.num_vars = len(variables)
-        
-        if downscale:
-            self.logger.info("Using downscaled maps")
-            var_paths = var_paths_downscaled
-            label_paths = label_paths_downscaled
-            partition_paths = partition_paths_downscaled
+
 
         # Check if the model architecture is valid
         if self.architecture not in ["RF", "LR", "MLP"]:
@@ -240,7 +235,7 @@ class HazardModel:
 
     """
     def __init__(self, hazard, variables, patch_size, batch_size, architecture, 
-                 logger, seed, epoch, early_stopping, patience, min_delta, output_dir, downscale=False):
+                 logger, seed, epoch, early_stopping, patience, min_delta, output_dir):
         super(HazardModel, self).__init__()
 
         # Configs
@@ -287,11 +282,6 @@ class HazardModel:
         # outputs
         self.output_dir = output_dir
 
-        if downscale:
-            self.logger.info("Using downscaled maps")
-            self.var_paths = var_paths_downscaled
-            self.label_paths = label_paths_downscaled
-            self.partition_paths = partition_paths_downscaled
 
 
     def design_basemodel(self):
@@ -841,7 +831,7 @@ class ModelMgr:
 
     """
     def __init__(self, batch_size=1024, patch_size=5, architecture='CNN', 
-            hazard='wildfire', epoch = 5, experiement_name='HazardMapper', downscale=False):
+            hazard='wildfire', epoch = 5, experiement_name='Experiment 1'):
         
         self.early_stopping = True
         self.patience = 3
@@ -887,13 +877,6 @@ class ModelMgr:
         # Create output directory if it doesn't exist
         self.output_dir = self.make_folder_structure()
 
-        # Downscale option for testing with smaller maps
-        self.downscale = downscale
-        if downscale:
-            self.logger.info("Using downscaled maps")
-            self.var_paths = var_paths_downscaled
-            self.label_paths = label_paths_downscaled
-            self.partition_paths = partition_paths_downscaled
  
     def build_model(self):
         """
@@ -916,7 +899,6 @@ class ModelMgr:
                 patience=self.patience,
                 min_delta=self.min_delta,
                 output_dir=self.output_dir,
-                downscale=self.downscale
             )
         elif self.model_type == 'baseline':
             hazard_model_instance = Baseline(
@@ -926,7 +908,6 @@ class ModelMgr:
                 logger=self.logger,
                 seed=self.seed,
                 output_path=self.output_dir,
-                downscale=self.downscale
             )
         return hazard_model_instance
         
@@ -1178,15 +1159,15 @@ class ModelMgr:
 
 
         # Save the hazard map npy
-        np.save(f'{self.output_dir}/{self.hazard}_hazard_map{ "_downscaled" if self.downscale else ""}.npy', full_map)
+        np.save(f'{self.output_dir}/{self.hazard}_hazard_map{ "_downscaled" if downscale else ""}.npy', full_map)
 
         # Plot and save hazard map
         plot_npy_arrays(
             full_map,
-            title=f"{self.hazard.capitalize()} Susceptibility Map{ ' (Downscaled)' if self.downscale else ''}",
+            title=f"{self.hazard.capitalize()} Susceptibility Map{ ' (Downscaled)' if downscale else ''}",
             name=f'{self.hazard} susceptibility',
             type='continuous',
-            save_path=f'{self.output_dir}/{self.hazard}_hazard_map{ "_downscaled" if self.downscale else ""}.png', 
+            save_path=f'{self.output_dir}/{self.hazard}_hazard_map{ "_downscaled" if downscale else ""}.png', 
             downsample_factor=1,
             water=True
         )
@@ -1330,7 +1311,7 @@ if __name__ == "__main__":
     parser.add_argument('-p', '--patch_size', type=int, default=5, help='Patch size for model input')
     parser.add_argument('-a', '--architecture', type=str, default='SimpleCNN', help='Model architecture (LR, RF, MLP, CNN, SimpleCNN, SpatialAttentionCNN)')
     parser.add_argument('-e', '--epochs', type=int, default=5, help='Number of training epochs')
-    parser.add_argument('-y', '--sweep', action='store_true', default=False,  help='Enable hyperparameter optimization')
+    parser.add_argument('--sweep', action='store_true', default=False,  help='Enable hyperparameter optimization')
     parser.add_argument('--map', action='store_true', default=False, help='Create hazard map after training')
     parser.add_argument('--explain', action='store_true', default=False, help='Compute SHAP values for model explanations')
     parser.add_argument('--downscale', action='store_true', default=False, help='Use downscaled maps for testing')
