@@ -4,6 +4,7 @@ This module provides utility functions for handling raster data, plotting numpy 
 and normalizing numpy arrays. It handles some of the feature preprocessing such as normalization.
 
 """
+import argparse
 import os
 
 import rasterio
@@ -64,9 +65,21 @@ def tif_to_npy(tif_file, npy_file):
     np.save(npy_file, data)
     print(f"Saved .npy file to: {npy_file}")
 
+def make_water_mask(downsample_factor=1):
 
+    if os.path.exists(f"Input/Europe/npy_arrays/water_mask_{downsample_factor}x.npy"):
+        print(f"Water mask already exists for downsample factor {downsample_factor}. Loading existing mask.")
+        return np.load(f"Input/Europe/npy_arrays/water_mask_{downsample_factor}x.npy")
+    landcover = np.load(raw_paths['landcover'])
+    if downsample_factor > 1:
+        landcover = landcover[::downsample_factor, ::downsample_factor]
 
-def plot_npy_arrays(npy_file, name, type, title = "", debug_nans=False, log=False, water=False, downsample_factor=10, save_path=None, cmap='viridis', labels=None, extent=None):
+    # Create a mask for landcover where the value is 210 (water)
+    water_mask = np.where(landcover == 210, 1, 0)
+    np.save(f"Input/Europe/npy_arrays/water_mask_{downsample_factor}x.npy", water_mask)
+    return water_mask
+
+def plot_npy_arrays(npy_file, name, type, title = "", debug_nans=False, log=False, water=False, downsample_factor=10, downsample_factor_watermask=10, save_path=None, cmap='viridis', labels=None, extent=None, logger=None):
     """
     Plots the data from npy files on a map with the correct coordinates.
 
@@ -91,7 +104,10 @@ def plot_npy_arrays(npy_file, name, type, title = "", debug_nans=False, log=Fals
     Returns:
     None
     """
-    print(f"Plotting {name}...")
+    if logger is None:
+        logger = print
+
+    logger(f"Plotting {name}...")
 
     # Define the extent for the map (longitude and latitude bounds)
     # This extent corresponds to the geographical bounds of Europe
@@ -106,15 +122,14 @@ def plot_npy_arrays(npy_file, name, type, title = "", debug_nans=False, log=Fals
 
     if isinstance(npy_file, str):
         npy_data = np.load(npy_file)
-        print("File loaded")
+
     elif isinstance(npy_file, np.ndarray):
         npy_data = npy_file
-        print("Array loaded")
 
     if downsample_factor > 1:
         npy_data = npy_data[::downsample_factor, ::downsample_factor]
-        print(f"Downsampled data shape: {npy_data.shape}")
-    
+        logger(f"Downsampled data shape: {npy_data.shape}")
+
     if log:
         npy_data = np.log1p(npy_data)
 
@@ -126,17 +141,14 @@ def plot_npy_arrays(npy_file, name, type, title = "", debug_nans=False, log=Fals
 
     # Plot the data on the subplot grid
     im = axs.imshow(npy_data, cmap=cmap, extent=extent)
-    print("image created")
+    logger("image created")
     if water:
-        # Load the landcover data
-        landcover = np.load(raw_paths['landcover'])
-        if downsample_factor > 1:
-            landcover = landcover[::downsample_factor, ::downsample_factor]
-
-        # Create a mask for landcover where the value is 210 (water)
-        water_mask = np.where(landcover == 210, 1, 0)
+        logger("Adding water mask")
+        water_mask = make_water_mask(downsample_factor=downsample_factor_watermask)
+        logger(f"Water mask shape: {water_mask.shape}")
         custom_blue_cmap = ListedColormap(['none', '#A6CAE0'])
         axs.imshow(water_mask, cmap=custom_blue_cmap, extent=extent, transform=ccrs.PlateCarree(), origin='upper')
+        logger("Water mask added")
 
     # Set title for each subplot
     axs.set_title(title, fontsize=16)
@@ -203,7 +215,7 @@ def plot_npy_arrays(npy_file, name, type, title = "", debug_nans=False, log=Fals
 
     # Save the plot
     if save_path is not None:
-        plt.savefig(save_path, dpi=1000, bbox_inches='tight')
+        plt.savefig(save_path, dpi=100, bbox_inches='tight')
         plt.close(fig)  # Close the figure to free up memory
 
     # plt.show()  # Show the plot
@@ -217,7 +229,8 @@ def plot_maps_grid(
     figsize=(12,8),
     nrows=4,
     ncols=4,
-    save_path=None
+    save_path=None,
+    logger=None
 ):
     """
     4×4 PlateCarree grid with:
@@ -227,6 +240,9 @@ def plot_maps_grid(
       - no per‐axes colorbars
       - minimal whitespace via manual row shifts
     """
+    if logger is None:
+        logger = print
+
     if len(data_list) > nrows*ncols or len(names) > nrows*ncols:
         raise ValueError("data_list and titles must each have max {nrows} x {ncols} elements")
 
@@ -323,18 +339,17 @@ def plot_maps_grid(
 
     for idx, ax in enumerate(axs):
         pos = ax.get_position()
-        
-        print(f"before: {pos.y0}")
-        print(row)
 
-        
-        ax.set_position([pos.x0, 
-                         pos.y0, 
+        logger(f"before: {pos.y0}")
+        logger(row)
+
+        ax.set_position([pos.x0,
+                         pos.y0,
                          pos.width, 
                          pos.height
                          ])
 
-        print(f"After ; {ax.get_position().y0}")
+        logger(f"After ; {ax.get_position().y0}")
         
 
     # shared axis labels
@@ -351,30 +366,34 @@ def plot_maps_grid(
 
 
     if save_path:
+        # make sure directory exists
+        os.makedirs(os.path.dirname(save_path), exist_ok=True)
         plt.savefig(save_path, dpi=500)
 
 
 
 
-def save_full_resolution_plot(npy_file, npy_name):
+def save_full_resolution_plot(npy_file, npy_name, logger=None):
     """
     Work in progress, not yet functional.
     Saves the full resolution plot of a numpy array as a JPEG image.
     """
+    if logger is None:
+        logger = print
 
 
     if isinstance(npy_file, str):
         npy_data = np.load(npy_file)
-        print("File loaded")
+        logger("File loaded")
     elif isinstance(npy_file, np.ndarray):
         npy_data = npy_file
-        print("Array loaded")
-    
+        logger("Array loaded")
+
 
     image = Image.fromarray(npy_data)
     image.save(f"{npy_name}_full_resolution.jpeg")
 
-def normalize_label(hazard_map, threshold=0.99):
+def normalize_label(hazard_map, threshold=0.99, logger=None):
     """
     Normalize a hazard map to the range [0, 1] based on a specified percentile threshold.
     
@@ -385,6 +404,8 @@ def normalize_label(hazard_map, threshold=0.99):
     Returns:
         np.ndarray: The normalized hazard map.
     """
+    if logger is None:
+        logger = print
 
     # Ensure the hazard map is a numpy array
     if isinstance(hazard_map, str):
@@ -394,7 +415,7 @@ def normalize_label(hazard_map, threshold=0.99):
 
     # Get the threshold value at the specified percentile
     threshold_value = np.nanpercentile(hazard_map[hazard_map > 0], threshold * 100)
-    print(f"{threshold*100}th percentile threshold: {threshold_value}")
+    logger(f"{threshold*100}th percentile threshold: {threshold_value}")
 
     # Cutoff the hazard map at the threshold
     hazard_map[hazard_map > threshold_value] = threshold_value
@@ -406,21 +427,78 @@ def normalize_label(hazard_map, threshold=0.99):
     return normalized_map
 
 if __name__ == "__main__":
-    for var in var_paths.values():
-        try:
-            downscale_map(var)
-        except Exception as e:
-            print(f"Error processing {var}: {e}")    
+    # Make argparse to choose which utility to run
+    parser = argparse.ArgumentParser(description="Downscale hazard maps")
+    parser.add_argument('--plot_grid', action='store_true', help="Plot a grid of maps")
+    parser.add_argument("--downscale", action="store_true", help="Downscale the maps")
+    
+    args = parser.parse_args()
 
-    for label in label_paths.values():
-        try:
-            downscale_map(label)
-        except Exception as e:
-            print(f"Error processing {label}: {e}")
-    
-    for partition in partition_paths.values():
-        try:
-            downscale_map(partition)
-        except Exception as e:
-            print(f"Error processing {partition}: {e}")
-    
+    if args.downscale:
+        for var in var_paths.values():
+            try:
+                downscale_map(var)
+            except Exception as e:
+                print(f"Error processing {var}: {e}")
+
+        for label in label_paths.values():
+            try:
+                downscale_map(label)
+            except Exception as e:
+                print(f"Error processing {label}: {e}")
+        
+        for partition in partition_paths.values():
+            try:
+                downscale_map(partition)
+            except Exception as e:
+                print(f"Error processing {partition}: {e}")
+
+    if args.plot_grid:
+        data_list = [
+            var_paths['elevation'],
+            var_paths['slope'],
+            var_paths['curvature'],
+            var_paths['accuflux'],
+            var_paths['precipitation_daily'],
+            var_paths['precipitation_monthly'],
+            var_paths['temperature'],
+            var_paths['landcover'],
+            var_paths['rivers'],
+            var_paths['roads'],
+            var_paths['population_density'],
+            var_paths['gdp'],
+            label_paths['flood'],
+            label_paths['landslide'],
+            label_paths['wildfire'],
+            label_paths['earthquake']
+        ]
+
+        names = [
+            "Elevation",
+            "Slope",
+            "Curvature",
+            "Accuflux",
+            "Precipitation Daily",
+            "Precipitation Monthly",
+            "Temperature",
+            "Landcover",
+            "Rivers",
+            "Roads",
+            "Population Density",
+            "GDP",
+            "Flood",
+            "Landslide",
+            "Wildfire",
+            "Earthquake"
+        ]
+
+        plot_maps_grid(
+            data_list,
+            names,
+            cmap='viridis',
+            downsample=10,
+            figsize=(16,12),
+            nrows=4,
+            ncols=4,
+            save_path="Output/Maps/conditioning_factors_grid.png",
+        )

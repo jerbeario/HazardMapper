@@ -17,6 +17,6 @@ python HazardMapper/preprocess.py
 # Make Partition Map
 python HazardMapper/partition.py -z $hazard
 # Downscale Maps
-python HazardMapper/utils.py
+python HazardMapper/utils.py --downscale 
 
 wait

@@ -14,7 +14,8 @@ from HazardMapper import ROOT
 ##################################################################################
 # Configure paths                                                                #
 #                                                                                #     
-temp_path = f"/Users/jeremypalmerio/Repos/MasterThesis/Input/Europe" # Temporary files will be stored here       #
+# temp_path = f"/Users/jeremypalmerio/Repos/MasterThesis/Input/Europe" # Temporary files will be stored here       #
+temp_path = f"{ROOT}/Input/Europe" # Temporary files will be stored here       #
 input_path = f"{ROOT}/Input/Europe" # User needs to provide the input data here #
 output_path = f"{ROOT}/Output/Europe" # Output data will be saved here          #
 #                                                                                #
@@ -160,7 +161,7 @@ partition_paths_downscaled = {
 }
 
 class HazardDataset(Dataset):
-    def __init__(self, hazard, variables, patch_size=5):
+    def __init__(self, hazard, variables, patch_size=5, downscale=False):
         """
         Custom Dataset for loading hazard-specific features and labels as patches.
 
@@ -168,21 +169,28 @@ class HazardDataset(Dataset):
         - hazard (str): The hazard type (e.g., "wildfire").
         - patch_size (int): The size of the patch (n x n) around the center cell.
         """
+        if downscale:
+            used_label_paths = label_paths_downscaled
+            used_var_paths = var_paths_downscaled
+        else:
+            used_label_paths = label_paths
+            used_var_paths = var_paths
+
         self.patch_size = patch_size
         self.num_vars = len(variables)
      
         # Check if the hazard is valid
-        if hazard not in label_paths.keys():
+        if hazard not in used_label_paths.keys():
             raise ValueError(f"Hazard '{hazard}' is not defined in the dataset.")
         
         # Check if the variables are valid
         for variable in variables:
-            if variable not in var_paths.keys():
+            if variable not in used_var_paths.keys():
                 raise ValueError(f"Variable '{variable}' is not defined in the dataset.")
     
         # get features and labels for the hazard
-        feature_paths = [var_paths_downscaled[variable] for variable in variables]
-        label_path = label_paths_downscaled[hazard]
+        feature_paths = [used_var_paths[variable] for variable in variables]
+        label_path = used_label_paths[hazard]
 
         # Load features (stacked along the first axis for channels)
         self.features = np.stack([np.load(path) for path in feature_paths], axis=0)

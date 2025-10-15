@@ -20,4 +20,5 @@ dependencies:
   - shap
   - jenkspy
   - onnx
+  - pydantic=2.11
 prefix: /Users/jeremypalmerio/opt/miniconda3/envs/HazardMapper

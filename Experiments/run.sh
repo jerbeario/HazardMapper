@@ -8,10 +8,10 @@ source ~/miniconda3/etc/profile.d/conda.sh
 conda activate HazardMapper
 
 hazard="flood"
-experiment="first_test"
+experiment="l=3"
 
 # Run the model 
 # Example with SimpleCNN architecture and 10 epochs
 
-python HazardMapper/model.py -n $experiment -z $hazard -a SimpleCNN -e 10 --map 
+python HazardMapper/model.py -n $experiment -z $hazard -a CNN_GAP -e 10 
 wait

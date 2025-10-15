@@ -65,7 +65,7 @@ class MLP(nn.Module):
         
         # Output layer
         layers.append(nn.Linear(n_nodes, 1))
-        layers.append(nn.Sigmoid())
+        # layers.append(nn.Sigmoid())
         
         self.model = nn.Sequential(*layers)
         
@@ -91,35 +91,180 @@ class MLP(nn.Module):
         return self.model(x)
 
 # Testing
-class CNN(nn.Module):
-    def __init__(self, in_channels: int, n_layers: int = 2, n_filters: int = 32, drop_value: float = 0.3, patch_size: int = 5):
-        super(CNN, self).__init__()
-        
+class CNN_GAP(nn.Module):
+    def __init__(
+        self,
+        in_channels: int,
+        n_layers: int = 2,
+        n_filters: int = 32,
+        drop_value: float = 0.3,
+        n_nodes: int = 256,
+        use_dropout: bool = True,
+    ):
+        super().__init__()
+
+        # Convolutional block
         conv_layers = []
         current_channels = in_channels
-
         for i in range(n_layers):
             out_channels = n_filters * (2 ** i)
-            conv_layers.append(nn.Conv2d(current_channels, out_channels, kernel_size=3, padding=1))
-            conv_layers.append(nn.BatchNorm2d(out_channels))
-            conv_layers.append(nn.ReLU())
+            conv_layers += [
+                nn.Conv2d(current_channels, out_channels, kernel_size=3, padding=1, bias=False),
+                nn.BatchNorm2d(out_channels),
+                nn.ReLU(),
+            ]
             current_channels = out_channels
 
         self.conv_block = nn.Sequential(*conv_layers)
 
+        # GAP-based classifier (patch-size agnostic)
+        classifier_layers = [
+            nn.AdaptiveAvgPool2d(1),   # → [B, C, 1, 1]
+            nn.Flatten(),             # → [B, C]
+            nn.Linear(current_channels, n_nodes),
+            nn.ReLU()
+        ]
+        if use_dropout:
+            classifier_layers.append(nn.Dropout(drop_value))
+        classifier_layers.append(nn.Linear(n_nodes, 1))
+        # classifier_layers.append(nn.Sigmoid())
+        self.classifier = nn.Sequential(*classifier_layers)
+
+
+    def forward(self, x):
+        x = self.conv_block(x)
+        x = self.classifier(x)
+        return x
+
+class CNN_GAPatt(nn.Module):
+    def __init__(
+        self,
+        in_channels: int,
+        n_layers: int = 2,
+        n_filters: int = 32,
+        drop_value: float = 0.3,
+        n_nodes: int = 256,
+        use_dropout: bool = True,  
+    ):
+        super().__init__()
+
+        # Convolutional feature extractor
+        conv_layers = []
+        current_channels = in_channels
+        for i in range(n_layers):
+            out_channels = n_filters * (2 ** i)
+            conv_layers += [
+                nn.Conv2d(current_channels, out_channels, kernel_size=3, padding=1, bias=False),
+                nn.BatchNorm2d(out_channels),
+                nn.ReLU(),
+            ]
+            current_channels = out_channels
+
+        self.conv_block = nn.Sequential(*conv_layers)
+        self.attn = SpatialAttentionLayer(current_channels) 
+
+        # GAP-based classifier
+        classifier_layers = [
+            nn.AdaptiveAvgPool2d(1),  # → [B, C, 1, 1]
+            nn.Flatten(),             # → [B, C]
+            nn.Linear(current_channels, n_nodes),
+            nn.ReLU(),
+        ]
+        if use_dropout:
+            classifier_layers.append(nn.Dropout(drop_value))
+        classifier_layers.append(nn.Linear(n_nodes, 1))
+        # classifier_layers.append(nn.Sigmoid())
+        self.classifier = nn.Sequential(*classifier_layers)
+
+    def forward(self, x):
+        x = self.conv_block(x)
+        x = self.attn(x)
+        x = self.classifier(x)
+        return x
+    
+class CNN(nn.Module):
+    def __init__(
+        self,
+        in_channels: int,
+        n_layers: int = 2,
+        n_filters: int = 32,
+        drop_value: float = 0.3,
+        patch_size: int = 5
+    ):
+        super().__init__()
+
+        # Convolutional stack
+        conv_layers = []
+        current_channels = in_channels
+        for i in range(n_layers):
+            out_channels = n_filters * (2 ** i)
+            conv_layers += [
+                nn.Conv2d(current_channels, out_channels, kernel_size=3, padding=1, bias=False),
+                nn.BatchNorm2d(out_channels),
+                nn.ReLU(),
+            ]
+            current_channels = out_channels
+
+        self.conv_block = nn.Sequential(*conv_layers)
+
+        # Classifier
         self.classifier = nn.Sequential(
-            nn.Flatten(),  # Output size: current_channels * 5 * 5
+            nn.Flatten(),
             nn.Linear(current_channels * patch_size * patch_size, 256),
             nn.ReLU(),
             nn.Dropout(drop_value),
             nn.Linear(256, 1),
-            nn.Sigmoid()
+            # nn.Sigmoid()
         )
 
     def forward(self, x):
         x = self.conv_block(x)
         return self.classifier(x)
+
         
+class CNNatt(nn.Module):
+    def __init__(
+        self,
+        in_channels: int,
+        n_layers: int = 2,
+        n_filters: int = 32,
+        drop_value: float = 0.3,
+        patch_size: int = 5
+    ):
+        super().__init__()
+
+        # Convolutional stack
+        conv_layers = []
+        current_channels = in_channels
+        for i in range(n_layers):
+            out_channels = n_filters * (2 ** i)
+            conv_layers += [
+                nn.Conv2d(current_channels, out_channels, kernel_size=3, padding=1, bias=False),
+                nn.BatchNorm2d(out_channels),
+                nn.ReLU(),
+            ]
+            current_channels = out_channels
+
+        self.conv_block = nn.Sequential(*conv_layers)
+
+        # Spatial attention after conv stack
+        self.attn = SpatialAttentionLayer(current_channels)
+
+        # Classifier
+        self.classifier = nn.Sequential(
+            nn.Flatten(),
+            nn.Linear(current_channels * patch_size * patch_size, 256),
+            nn.ReLU(),
+            nn.Dropout(drop_value),
+            nn.Linear(256, 1),
+            # nn.Sigmoid()
+        )
+
+    def forward(self, x):
+        x = self.conv_block(x)
+        x = self.attn(x)
+        return self.classifier(x)
+
 # Simple CNN architecture to test the pipeline
 class SimpleCNN(nn.Module):
     def __init__(self, logger, device, num_vars, filters=16, n_layers=2, dropout=False, 
@@ -176,7 +321,7 @@ class SimpleCNN(nn.Module):
             nn.ReLU(),
             nn.Dropout(drop_value) if dropout else nn.Identity(),
             nn.Linear(1024, 1),
-            nn.Sigmoid()
+            # nn.Sigmoid()
         )
     
     def forward(self, x):
@@ -195,186 +340,7 @@ class SimpleCNN(nn.Module):
         
         return x
 
-# UNet architecture for hazard susceptibility modeling (not functional yet)
-class UNet(nn.Module):
-    def __init__(self, logger, device, num_vars, filters=64, n_layers=4, activation=nn.ReLU(), 
-                 dropout=True, drop_value=0.3, kernel_size=3, pool_size=2, patch_size=5):
-        """
-        UNet architecture for hazard susceptibility modeling.
-        
-        Args:
-            logger: Logger instance
-            device: Torch device
-            num_vars: Number of input variables/channels
-            filters: Base number of filters (will be doubled in each layer)
-            n_layers: Number of downsampling/upsampling layers
-            activation: Activation function
-            dropout: Whether to use dropout
-            drop_value: Dropout probability
-            kernel_size: Kernel size for convolutions
-            pool_size: Pooling size for downsampling
-            patch_size: Size of the input neighborhood
-        """
-        super(UNet, self).__init__()
-        
-        self.logger = logger
-        self.device = device
-        self.num_vars = num_vars
-        self.filters = filters
-        self.n_layers = n_layers
-        self.activation = activation
-        self.dropout = dropout
-        self.drop_value = drop_value
-        self.kernel_size = kernel_size
-        self.pool_size = pool_size
-        self.patch_size = patch_size
-        
-        self.logger.info(f"Initializing UNet with {num_vars} input variables and {n_layers} layers")
-        
-        # Input layer: Process each variable separately
-        self.var_blocks = nn.ModuleList()
-        for _ in range(self.num_vars):
-            # Initial preprocessing for each variable
-            self.var_blocks.append(nn.Sequential(
-                nn.Conv2d(1, filters, kernel_size=kernel_size, padding='same'),
-                nn.BatchNorm2d(filters),
-                activation,
-                nn.Conv2d(filters, filters, kernel_size=kernel_size, padding='same'),
-                nn.BatchNorm2d(filters),
-                activation
-            ))
-        
-        # Feature fusion layer
-        self.fusion = nn.Conv2d(filters * num_vars, filters, kernel_size=1)
-        
-        # Encoder blocks
-        self.enc_blocks = nn.ModuleList()
-        self.pool_blocks = nn.ModuleList()
-        current_filters = filters
-        
-        for i in range(n_layers):
-            next_filters = current_filters * 2
-            self.enc_blocks.append(nn.Sequential(
-                nn.Conv2d(current_filters, next_filters, kernel_size, padding='same'),
-                nn.BatchNorm2d(next_filters),
-                activation,
-                nn.Conv2d(next_filters, next_filters, kernel_size, padding='same'),
-                nn.BatchNorm2d(next_filters),
-                activation
-            ))
-            self.pool_blocks.append(nn.MaxPool2d(pool_size))
-            current_filters = next_filters
-        
-        # Bottleneck
-        self.bottleneck = nn.Sequential(
-            nn.Conv2d(current_filters, current_filters * 2, kernel_size, padding='same'),
-            nn.BatchNorm2d(current_filters * 2),
-            activation,
-            nn.Conv2d(current_filters * 2, current_filters * 2, kernel_size, padding='same'),
-            nn.BatchNorm2d(current_filters * 2),
-            activation,
-            nn.Dropout2d(drop_value) if dropout else nn.Identity()
-        )
-        
-        # Decoder blocks
-        self.up_blocks = nn.ModuleList()
-        self.dec_blocks = nn.ModuleList()
-        current_filters = current_filters * 2
-        
-        for i in range(n_layers):
-            next_filters = current_filters // 2
-            self.up_blocks.append(nn.Sequential(
-                nn.ConvTranspose2d(current_filters, next_filters, kernel_size=pool_size, 
-                                stride=pool_size, padding=0),
-                nn.BatchNorm2d(next_filters),
-                activation
-            ))
-            self.dec_blocks.append(nn.Sequential(
-                nn.Conv2d(current_filters, next_filters, kernel_size, padding='same'),
-                nn.BatchNorm2d(next_filters),
-                activation,
-                nn.Conv2d(next_filters, next_filters, kernel_size, padding='same'),
-                nn.BatchNorm2d(next_filters),
-                activation
-            ))
-            current_filters = next_filters
-        
-        # Classification head
-        # Calculate the output size based on input neighborhood and operations
-        patch_size = patch_size
-        final_size = patch_size // (pool_size ** n_layers) if patch_size % (pool_size ** n_layers) == 0 else 1
-        
-        self.classification_head = nn.Sequential(
-            nn.AdaptiveAvgPool2d((1, 1)),  # Global average pooling
-            nn.Flatten(),
-            nn.Linear(filters, 256),
-            nn.BatchNorm1d(256),
-            activation,
-            nn.Dropout(drop_value) if dropout else nn.Identity(),
-            nn.Linear(256, 64),
-            nn.BatchNorm1d(64),
-            activation,
-            nn.Linear(64, 1)
-        )
-    
-    def forward(self, x):
-        """Forward pass of the UNet model."""
-        # Split input into separate variable channels
-        var_inputs = [x[:, i:i+1] for i in range(self.num_vars)]
-        
-        # Process each variable through its own block
-        var_features = []
-        for i, (block, inp) in enumerate(zip(self.var_blocks, var_inputs)):
-            var_features.append(block(inp))
-        
-        # Concatenate and fuse features from all variables
-        x = torch.cat(var_features, dim=1)
-        x = self.fusion(x)
-        
-        # Store encoder outputs for skip connections
-        enc_features = []
-        
-        # Encoder path
-        for enc_block, pool_block in zip(self.enc_blocks, self.pool_blocks):
-            # Save output before pooling for skip connection
-            enc_features.append(x)
-            # Apply convolution block then pooling
-            x = enc_block(x)
-            x = pool_block(x)
-        
-        # Bottleneck
-        x = self.bottleneck(x)
-        
-        # Decoder path with skip connections
-        for i, (up_block, dec_block) in enumerate(zip(self.up_blocks, self.dec_blocks)):
-            # Upsample
-            x = up_block(x)
-            
-            # Get corresponding encoder feature map
-            skip_feature = enc_features[-(i+1)]
-            
-            # Handle size mismatch (if any)
-            if x.shape != skip_feature.shape:
-                # Center crop or pad to match
-                diff_h = skip_feature.size(2) - x.size(2)
-                diff_w = skip_feature.size(3) - x.size(3)
-                
-                if diff_h > 0 and diff_w > 0:
-                    skip_feature = skip_feature[:, :, diff_h//2:-(diff_h//2), diff_w//2:-(diff_w//2)]
-                elif diff_h < 0 and diff_w < 0:
-                    padding = [-diff_h//2, -diff_h-(-diff_h//2), -diff_w//2, -diff_w-(-diff_w//2)]
-                    skip_feature = F.pad(skip_feature, padding)
-            
-            # Concatenate for skip connection
-            x = torch.cat([x, skip_feature], dim=1)
-            
-            # Apply convolution block
-            x = dec_block(x)
-        
-        # Final classification
-        outputs = self.classification_head(x)
-        return torch.sigmoid(outputs)
-    
+
 # model from Japan paper converted to pytorch
 class SpatialAttentionLayer(nn.Module):
     def __init__(self, channels, device=None):
@@ -455,7 +421,7 @@ class SpatialAttentionCNN(nn.Module):
             nn.ReLU(),
             nn.Dropout(drop_value) if dropout else nn.Identity(),
             nn.Linear(1024, 1),
-            nn.Sigmoid()
+            # nn.Sigmoid()
         )
     
     def forward(self, x):

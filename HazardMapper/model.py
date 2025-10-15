@@ -32,26 +32,21 @@ from sklearn.metrics import (
 import torch
 from torch.utils.data import DataLoader, Subset
 import torch.nn.functional as F
-from torch.nn import BCELoss
+from torch.nn import BCELoss, BCEWithLogitsLoss
 from torch.utils.data import DataLoader
 import torch.multiprocessing 
+from torchsummary import summary
 
 import wandb
 
 from HazardMapper.dataset import HazardDataset, raw_paths, var_paths, label_paths, label_paths_downscaled, var_paths_downscaled, partition_paths, partition_paths_downscaled
-from HazardMapper.architecture import MLP, CNN, SimpleCNN, SpatialAttentionCNN
+from HazardMapper.architecture import MLP, CNN, SimpleCNN, SpatialAttentionCNN, CNNatt, CNN_GAP, CNN_GAPatt
 from HazardMapper.utils import plot_npy_arrays
 from HazardMapper import ROOT
 
 import numpy as np
 import shap
 
-import warnings
-warnings.filterwarnings(
-    "ignore",
-    category=UserWarning,
-    module="pydantic._internal._generate_schema"
-)
 
 # plt.style.use('bauhaus_light')
 
@@ -269,6 +264,7 @@ class HazardModel:
         self.n_nodes = 128 # for MLP architecture
 
         # Training
+        self.loss_fn = BCEWithLogitsLoss()
         self.current_epoch = 0
         self.epochs = epoch
         self.early_stopping = early_stopping
@@ -313,7 +309,37 @@ class HazardModel:
                 n_filters=self.filters,
                 n_layers=self.n_layers,
                 drop_value=self.drop_value,
-                patch_size=self.patch_size
+                patch_size=self.patch_size,
+
+            )
+
+        elif self.architecture == 'CNNatt':
+            model = CNNatt(
+                in_channels=self.num_vars,
+                n_filters=self.filters,
+                n_layers=self.n_layers,
+                drop_value=self.drop_value,
+                patch_size=self.patch_size,
+            )
+        elif self.architecture == 'CNN_GAP':
+            model = CNN_GAP(
+                in_channels=self.num_vars,
+                n_filters=self.filters,
+                n_layers=self.n_layers,
+                drop_value=self.drop_value,
+                n_nodes=self.n_nodes,
+                use_dropout=self.dropout,
+
+            )
+            
+        elif self.architecture == 'CNN_GAPatt':
+            model = CNN_GAPatt(
+                in_channels=self.num_vars,
+                n_filters=self.filters,
+                n_layers=self.n_layers,
+                drop_value=self.drop_value,
+                n_nodes=self.n_nodes,
+                use_dropout=self.dropout,
             )
 
         elif self.architecture == 'SimpleCNN':
@@ -357,9 +383,25 @@ class HazardModel:
                             Number of layers: {self.n_layers}\n
                             Dropout value: {self.drop_value}\n
                             Weight decay: {self.weight_decay}\n
+                            Dropout: {self.dropout}\n
+                            Kernel size: {self.kernel_size}\n
+                            Pool size: {self.pool_size}\n
+                            Nodes in MLP: {self.n_nodes}\n
+
                           ''')
+        if self.device.type != 'mps':  # torchsummary does not support MPS
+            summary(self.model, input_size=(self.num_vars, self.patch_size, self.patch_size), device=str(self.device))
+        else:
+            # print number of parameters
+            total_params = sum(p.numel() for p in model.parameters())
+            trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+
+            self.logger.info(f"Total parameters: {total_params:,}")
+            self.logger.info(f"Trainable parameters: {trainable_params:,}\n")
+
         return model
-    
+
+
     def load_dataset(self):
         """
         Preprocess the data for the model, using the dataset class.
@@ -377,7 +419,7 @@ class HazardModel:
         partition_shape = partition_map.shape
         self.logger.info(f'Splitting dataset into train, validation and test sets')
 
-        dataset = HazardDataset(hazard=self.hazard, variables=self.variables, patch_size=self.patch_size)
+        dataset = HazardDataset(hazard=self.hazard, variables=self.variables, patch_size=self.patch_size, downscale=downscale)
         
         idx_transform = np.array([[partition_shape[1]],[1]])
 
@@ -434,7 +476,8 @@ class HazardModel:
             patience=self.patience,
         )
         # Define loss function
-        loss_fn = BCELoss()
+       
+
 
         # Initialize trackers
         self.epochs_without_improvement = 0
@@ -454,13 +497,15 @@ class HazardModel:
                 # Reshape Labels to match output 
                 labels = labels.unsqueeze(1)
 
-                # Forward pass
+                # Forward pass with sigmoid activation
                 outputs = self.model(inputs)
+                # outputs = torch.sigmoid(outputs)
+
 
                 # loss = F.binary_cross_entropy(outputs, labels, weight=sample_weigts )
-                loss = loss_fn(outputs, labels)
+                loss = self.loss_fn(outputs, labels)
 
-                mae = self.safe_mae(labels, outputs)
+                mae = self.safe_mae(labels, torch.sigmoid(outputs))
 
                 # Backward pass
                 optimizer.zero_grad()
@@ -482,7 +527,7 @@ class HazardModel:
             val_loss, val_mae = self.evaluate()
 
             # Log epoch metrics
-            self.logger.info(f"Epoch {epoch+1}/{self.epochs}")
+            self.logger.info(f"———Epoch {epoch+1}/{self.epochs}———")
             self.logger.info(f"Train Loss: {train_loss:.4f}, Train MAE: {train_mae:.4f}")
             self.logger.info(f"Val Loss: {val_loss:.4f}, Val MAE: {val_mae:.4f}")
 
@@ -540,8 +585,8 @@ class HazardModel:
     def save_best_model(self):
         # Create directory if it doesn't exist
 
-        model_path = f"{self.output_dir}/models/{self.best_val_loss:4f}_{self.name_model}.pth"
-        onnx_path = f"{self.output_dir}/models/{self.best_val_loss:4f}_{self.name_model}.onnx"
+        model_path = f"{self.output_dir}models/{self.best_val_loss:4f}_{wandb.run.id}.pth"
+        onnx_path = f"{self.output_dir}models/{self.best_val_loss:4f}_{wandb.run.id}.onnx"
         os.makedirs(os.path.dirname(model_path), exist_ok=True)
         os.makedirs(os.path.dirname(onnx_path), exist_ok=True)
 
@@ -580,7 +625,7 @@ class HazardModel:
         Load the best model state from the saved file.
         """
         if self.best_model_state is not None:
-            self.design_basemodel()  # Recreate the model architecture
+            # self.design_basemodel()  # Recreate the model architecture
             self.model.load_state_dict(self.best_model_state)
             self.logger.info("Best model state loaded successfully.")
         else:
@@ -611,22 +656,21 @@ class HazardModel:
         val_loss = 0.0
         val_mae = 0.0
 
-    
-        loss_fn = BCELoss()
+
 
         with torch.no_grad():
-            self.logger.info(f'Evaluating the model with :{len(self.val_loader)*self.batch_size} samples ')
             for inputs, labels in self.val_loader:
                 inputs, labels = inputs.to(self.device), labels.to(self.device)
                 labels = labels.unsqueeze(1)
 
                 # Forward pass
                 outputs = self.model(inputs)
+                # outputs = torch.sigmoid(outputs)
                 
                 # Calculate metrics
                 # loss = self.safe_binary_crossentropy(labels, outputs)
-                loss = loss_fn(outputs, labels)
-                mae = self.safe_mae(labels, outputs)
+                loss = self.loss_fn(outputs, labels)
+                mae = self.safe_mae(labels, torch.sigmoid(outputs))
 
                 
                 val_loss += loss.item()
@@ -649,9 +693,8 @@ class HazardModel:
             y_prob: Predicted probabilities for the positive class
         """
     
-        self.logger.info('Testing model...')
-        # self.logger.info('Loading best model for testing...')
-        # self.load_best_model()
+        self.logger.info('Loading best model for testing...')
+        self.load_best_model()
         self.model.eval()
 
         y_true, y_prob = [], []
@@ -659,7 +702,8 @@ class HazardModel:
         with torch.no_grad():
             for inputs, labels in self.test_loader:
                 inputs, labels = inputs.to(self.device), labels.to(self.device)
-                outputs = self.model(inputs).squeeze()
+                # outputs = self.model(inputs).squeeze()
+                outputs = torch.sigmoid(self.model(inputs)).squeeze()
                 y_true.extend(labels.cpu().numpy())
                 y_prob.extend(outputs.cpu().numpy())
 
@@ -681,7 +725,7 @@ class HazardModel:
         indices = np.argwhere(mask_flat).flatten()
 
         # Create a Subset of the dataset using the indices
-        dataset = HazardDataset(hazard=self.hazard, variables=self.variables, patch_size=self.patch_size)        
+        dataset = HazardDataset(hazard=self.hazard, variables=self.variables, patch_size=self.patch_size, downscale=downscale)        
         dataset = Subset(dataset, indices)  
         loader = DataLoader(dataset, num_workers=self.num_workers, batch_size=self.batch_size, shuffle=False)
         self.logger.info(f"Dataset size: {len(dataset)}")   
@@ -692,10 +736,9 @@ class HazardModel:
         with torch.no_grad():
             for inputs, _ in loader:
                 inputs = inputs.to(self.device)
-                outputs = self.model(inputs).squeeze()
+                outputs = torch.sigmoid(self.model(inputs)).squeeze()
                 predictions.extend(outputs.cpu().numpy())
 
-        print(f"Predictions shape: {np.array(predictions).shape}, Type: {type(predictions)}, Values: {predictions[:5]}")
         return np.array(predictions)
 
     def load_model(self, model_path=None):
@@ -748,7 +791,7 @@ class HazardModel:
 
         # Compute SHAP values
         explainer = shap.DeepExplainer(self.model, background)
-        shap_values = explainer.shap_values(x_sample)  # shape: [samples, channels, H, W]
+        shap_values = explainer.shap_values(x_sample, check_additivity=False)  # shape: [samples, channels, H, W]
 
         # ----- Channel-level summary plot -----
         channel_shap = np.mean(shap_values, axis=(2, 3, 4))  # [samples, channels]
@@ -868,10 +911,11 @@ class ModelMgr:
         
         if self.architecture in ['LR', 'RF']:
             self.model_type = 'baseline'
-        elif self.architecture in ['CNN', 'SimpleCNN', 'SpatialAttentionCNN', 'MLP']:
+        elif self.architecture in ['CNN', 'SimpleCNN', 'SpatialAttentionCNN', 'MLP', 'CNNatt', 'CNN_GAP', 'CNN_GAPatt']:
             self.model_type = 'hazardmodel'
         else:
-            raise ValueError(f"Unknown architecture: {self.architecture}, choose from ['LR', 'RF', 'CNN', 'SimpleCNN', 'SpatialAttentionCNN', 'MLP']")
+            raise ValueError(f"Unknown architecture: {self.architecture}, choose from ['LR', 'RF', 'CNN', 'SimpleCNN', 'SpatialAttentionCNN', 'MLP', 'CNNatt', 'CNN_GAP']")
+
 
       
         # Create output directory if it doesn't exist
@@ -909,6 +953,9 @@ class ModelMgr:
                 seed=self.seed,
                 output_path=self.output_dir,
             )
+
+
+       
         return hazard_model_instance
         
     def set_logger(self, verbose=True):
@@ -1147,11 +1194,10 @@ class ModelMgr:
         # get indices to make map and predict using model
         elevation = np.load(var_paths['elevation'])
         map_shape = elevation.shape
-        print("Map shape:", map_shape)
 
         map_mask = ~np.isnan(elevation)
         map_predictions = self.hazard_model_instance.predict(map_mask)
-        # print("Map predictions shape:", map_predictions.shape)
+
 
         # make map with nan values where no data
         full_map = np.full(map_shape, np.nan)
@@ -1169,7 +1215,8 @@ class ModelMgr:
             type='continuous',
             save_path=f'{self.output_dir}/{self.hazard}_hazard_map{ "_downscaled" if downscale else ""}.png', 
             downsample_factor=1,
-            water=True
+            water=True,
+            logger=self.logger.info
         )
 
     def sweep(self):
@@ -1230,12 +1277,12 @@ class ModelMgr:
         hparams = self._default_hparams()
         if config:
             hparams.update(config)
-
         # init wandb (safe for both normal + sweep)
         try:
             wandb.init(
                 project=self.hazard,
                 config=hparams,
+                name=f"{self.architecture}_{self.experiement_name}",
             )
         except Exception:
             self.logger.debug("wandb.init() failed or no active run")
@@ -1264,7 +1311,7 @@ class ModelMgr:
             "learning_rate": 2e-3,
             "weight_decay": 5e-5,
             "filters": 64,
-            "n_layers": 1,
+            "n_layers": 3,
             "drop_value": 0.3,
             "kernel_size": 3,
             "pool_size": 2,
@@ -1274,7 +1321,7 @@ class ModelMgr:
 
 def validate_inputs(args):
     valid_hazards = label_paths.keys()
-    valid_architectures = ['SimpleCNN', 'SpatialAttentionCNN', 'MLP', 'LR', 'RF', 'CNN']
+    valid_architectures = ['SimpleCNN', 'SpatialAttentionCNN', 'MLP', 'LR', 'RF', 'CNN', 'CNNatt', 'CNN_GAP', 'CNN_GAPatt']
 
     if args.hazard not in valid_hazards:
         raise ValueError(f"Invalid hazard type: {args.hazard}. Choose from {valid_hazards}.")
@@ -1291,10 +1338,10 @@ def validate_inputs(args):
     if args.epochs <= 0:
         raise ValueError("Number of epochs must be a positive integer.")
 
-    if args.sweep and args.architecture not in ['SimpleCNN', 'SpatialAttentionCNN', 'MLP']:
+    if args.sweep and args.architecture not in ['SimpleCNN', 'SpatialAttentionCNN', 'MLP', 'CNN_GAP','CNN', 'CNNatt', 'CNN_GAPatt']:
         raise ValueError("Hyperparameter sweep is only supported for torch architectures.")
 
-    if args.explain and args.architecture not in ['SimpleCNN', 'SpatialAttentionCNN', 'MLP']:
+    if args.explain and args.architecture not in ['SimpleCNN', 'SpatialAttentionCNN', 'MLP', 'CNN', 'CNN_GAP', 'CNNatt', 'CNN_GAPatt']:
         raise ValueError("SHAP explanations are only supported for torch architectures.")
 
     return True
@@ -1306,10 +1353,10 @@ if __name__ == "__main__":
     # use argparser 
     parser = argparse.ArgumentParser(description='Hazard Mapper Configuration')
     parser.add_argument('-n', '--name', type=str, default='HazardMapper', help='Name of the experiment')
-    parser.add_argument('-z', '--hazard', type=str, default='landslide', help='Hazard type (wildfire or landslide soon flood)')
+    parser.add_argument('-z', '--hazard', type=str, default='landslide', help='Hazard type (wildfire, landslide or flood)')
     parser.add_argument('-b', '--batch_size', type=int, default=1024, help='Batch size for training')
     parser.add_argument('-p', '--patch_size', type=int, default=5, help='Patch size for model input')
-    parser.add_argument('-a', '--architecture', type=str, default='SimpleCNN', help='Model architecture (LR, RF, MLP, CNN, SimpleCNN, SpatialAttentionCNN)')
+    parser.add_argument('-a', '--architecture', type=str, default='CNN', help='Model architecture (LR, RF, MLP, CNN, SimpleCNN, SpatialAttentionCNN, CNNatt, CNN_GAP, CNN_GAPatt)')
     parser.add_argument('-e', '--epochs', type=int, default=5, help='Number of training epochs')
     parser.add_argument('--sweep', action='store_true', default=False,  help='Enable hyperparameter optimization')
     parser.add_argument('--map', action='store_true', default=False, help='Create hazard map after training')
@@ -1328,6 +1375,7 @@ if __name__ == "__main__":
     make_map = args.map
     explain = args.explain
     downscale = args.downscale
+    
 
 
     if downscale:
@@ -1345,7 +1393,6 @@ if __name__ == "__main__":
         epoch=epoch,
         hazard=hazard,
         experiement_name=experiement_name,
-        downscale=downscale
     )
     # Run hyperparameter sweep or single training/evaluation
     if sweep:
@@ -1363,7 +1410,6 @@ if __name__ == "__main__":
     try:
         wandb.finish()
     except Exception:
-        model_mgr.logger.debug("wandb.finish() failed or no run")
+        model_mgr.logger.debug("wandb.finish() failed or no run")    
     os._exit(0)
     
-    print("All tasks completed successfully.")
