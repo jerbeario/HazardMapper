@@ -96,13 +96,6 @@ The `dataset.py` module defines a custom dataset and helper functions to load ha
   - Binarize hazard labels (except for multi-hazard cases).
   - Validate input by ensuring that the specified hazard and variable names exist in the defined paths.
 
-- **Balanced Batch Sampling:**  
-  The module includes the `BalancedBatchSampler` class, which ensures that each training batch has a balanced number of positive (hazard occurrence) and negative samples. This is crucial for training on imbalanced hazard data, where the number of non-hazard instances usually far exceeds the occurrences.
-
-- **Index Conversion Helpers:**  
-  For efficient handling of spatial indices, helper functions `index2d_to_1d` and `index1d_to_2d` convert between 2D spatial coordinates and their flattened 1D indices. This is especially useful when dealing with large rasterized datasets.
-
-By encapsulating data loading and preprocessing in a dedicated module, HazardMapper ensures seamless integration with PyTorch's data pipelines, making it easier to experiment with different input configurations and model architectures.
 
 ### Preprocess
 
@@ -261,6 +254,9 @@ The `architecture.py` module provides various architectures for hazard susceptib
     A fully connected neural network designed to process 1D feature vectors. Useful as a baseline for non-spatial inputs.
   - **CNN:**  
     A basic convolutional neural network that applies convolutional filters to capture spatial patterns in input patches.
+    **Note:** This architecture is also among the most stable options.
+  - **CNNatt:**  
+    A variant that applies spatial attention after the convolutional layers for improved feature emphasis.
   - **SimpleCNN:**  
     A lightweight CNN that balances complexity and performance, designed for patch-based spatial data.
   - **SpatialAttentionCNN:**  
@@ -270,63 +266,73 @@ The `architecture.py` module provides various architectures for hazard susceptib
     **Note:** This architecture is one of the most stable models in the system.
   - **CNN_GAPatt:**  
     Combines convolutional feature extraction with an attention mechanism and GAP.  
-    **Note:** This architecture is also among the most stable options.
-  - **CNNatt:**  
-    A variant that applies spatial attention after the convolutional layers for improved feature emphasis.
+    
+  
 
-Depending on your experimental requirements and the nature of your input data, you can select the appropriate architecture. For robust and stable deep learning performance, **CNN_GAP** and **CNN_GAPatt** are recommended, while **LR** and **RF** serve as quick and interpretable baselines using scikit-learn.
+Depending on your experimental requirements and the nature of your input data, you can select the appropriate architecture. For robust and stable deep learning performance, **CNN_GAP** and **CNN** are recommended, while **LR** and **RF** serve as quick and interpretable baselines using scikit-learn.
 
 
 ### Utils 
 
-The `utils.py` module provides a collection of utility functions for preprocessing and visualizing geospatial data. These functions help with tasks such as downscaling maps, converting raster files to NumPy arrays, creating water masks, and plotting data on maps. Key functions include:
+### Utils
+
+The `utils.py` module provides a collection of utility functions for handling, processing, and visualizing geospatial data. These functions support various preprocessing and plotting tasks needed throughout the HazardMapper pipeline. Key functionalities include:
 
 - **Downscaling Maps:**  
-  The `downscale_map(path)` function takes a raster map (stored as a NumPy array) and downsamples it by a defined factor (default factor is 10). This function prints the original and downscaled shapes, and saves the downscaled array as a new `.npy` file.
+  The `downscale_map(path)` function downsamples a raster map (stored as a NumPy array) by a fixed factor (default is 10) and saves the new downscaled map as a `.npy` file. This is useful for faster processing and visualization.
 
-- **Converting TIF Files to Numpy Arrays:**  
-  The `tif_to_npy(tif_file, npy_file)` function reads a `.tif` file (using the `rasterio` library) and converts it into a NumPy array. The resulting array is then saved to disk in `.npy` format.
+- **Converting Raster Files:**  
+  The `tif_to_npy(tif_file, npy_file)` function converts a `.tif` file into a NumPy array using the `rasterio` library. This conversion allows you to work with standard array operations and integrate the data into the processing pipeline.
 
-- **Creating Water Masks:**  
-  The `make_water_mask(downsample_factor=1)` function processes landcover data to create a binary water mask. Pixels with a specific landcover value (e.g., 210 for water) are marked, and the mask is saved for reuse.
+- **Water Mask Creation:**  
+  The `make_water_mask(downsample_factor=1)` function generates a binary water mask from the landcover raster. It marks pixels corresponding to water (identified by the landcover value of 210) and saves this mask for reuse.
 
-- **Plotting Numpy Arrays on Maps:**  
-  The `plot_npy_arrays(...)` function provides a robust mechanism for visualizing NumPy arrays over a map. It supports:
-  - Multiple plot types (e.g., continuous, partition, bins, categorical).
-  - Downsampling for faster plotting.
-  - Logarithmic transformations and debugging options.
+- **Plotting Individual Maps:**  
+  The `plot_npy_arrays(...)` function allows for detailed visualization of a NumPy array over a map. It supports:
+  - Downsampling to manage very large arrays.
+  - Logarithmic transformation of data.
+  - Debugging support (by distinguishing NaNs).
   - Overlaying additional features such as water masks.
-  
-  This function is useful for visualizing hazard maps, partition maps, and other geospatial data.
+  - Automatic inference of plot titles, names, and types based on the input file.
 
-- **Plotting a Grid of Maps:**  
-  The `plot_maps_grid(...)` function generates a multi-panel grid (e.g., 4×4) showcasing different conditioning factors. It covers:
-  - Downsampling of input arrays.
-  - Customizable color maps and grid layouts.
-  - Shared axis labels and a common colorbar.
+- **Grid Plotting of Conditioning Factors:**  
+  The `plot_maps_grid(...)` function generates a multi-panel (e.g., 4×4) grid of maps, each displaying different conditioning factors. This function handles:
+  - Consistent downsampling and layout of subplots.
+  - Customizable color maps and grid configuration.
+  - Shared axis labels and a common colorbar across all panels.
   
 - **Data Normalization:**  
-  The `normalize_label(hazard_map, threshold=0.99)` function normalizes a given hazard map to the range [0, 1] based on a specified percentile threshold. This is particularly useful when preprocessing hazard data for visualization or further analysis.
+  The `normalize_label(hazard_map, threshold=0.99)` function normalizes hazard maps to the [0, 1] range based on a specified percentile threshold. This normalization is essential for comparing or visualizing hazard intensities across different maps.
 
+- **Helper Functions:**  
+  Additional helper functions such as:
+  - `infer_name_from_path(data)` – infers a human-readable name from a file path.
+  - `infer_title_from_name(name, type)` – constructs a default title for a plot.
+  - `infer_type(data, name)` – deduces the type of data (continuous, partition, bins, or categorical) from the array values.
+  - `infer_downscaled(path)` – determines whether a file is downscaled based on its filename.
+  
 #### Command-Line Usage
 
-The `utils.py` module also supports command-line execution for common tasks. For example:
+The module also supports command-line execution for common tasks. For example:
 
-- **Downscaling Raster Maps:**  
-  Run the module with the `--downscale` flag to downscale all maps defined in your variable and label paths:
+- **Downscaling Raster Maps:**
   ```sh
   python HazardMapper/utils.py --downscale
   ```
+  This command downscales all maps defined in your variable and label paths.
 
-- **Plotting a Grid of Maps:**  
-  Run the module with the `--plot_grid` flag to automatically generate and save a grid of plots:
+- **Plotting a Grid of Maps:**
   ```sh
   python HazardMapper/utils.py --plot_grid
   ```
+  This command generates and saves a grid of maps that display various environmental conditioning factors.
 
-These commands leverage the defined paths in the module (such as `var_paths`, `label_paths`, and `partition_paths`) to locate and process the relevant data files.
+- **Plotting a Single Map:**
+  ```sh
+  python HazardMapper/utils.py --plot path/to/your_file.npy
+  ```
+  This command displays the plot for a specific `.npy` file, applying any inferred or specified visualization settings.
 
-This module streamlines the preprocessing and visualization steps, making it easier to work with large geospatial datasets and to quickly generate visual insights.
 
 ## License
 
