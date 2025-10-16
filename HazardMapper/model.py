@@ -877,7 +877,7 @@ class ModelMgr:
             hazard='wildfire', epoch = 5, experiement_name='Experiment 1'):
         
         self.early_stopping = True
-        self.patience = 3
+        self.patience = 4
         self.min_delta = 0.001
         self.hazard = hazard
         self.batch_size = batch_size

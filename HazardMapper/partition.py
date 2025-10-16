@@ -23,7 +23,7 @@ from multiprocessing import Pool
 import os
 
 from HazardMapper.utils import plot_npy_arrays
-from HazardMapper.dataset import label_paths, hazard_map_paths, raw_paths, partition_paths, partition_paths_downscaled
+from HazardMapper.dataset import label_paths, raw_paths, partition_paths, partition_paths_downscaled
 
 def create_partition_map(region: np.ndarray, elevation: np.ndarray, landcover: np.ndarray, hazard: np.ndarray, seed: int = 42, train_ratio = 0.8) -> np.ndarray:
     """
@@ -246,6 +246,10 @@ if __name__ == "__main__":
     partition_map = erode_partition_borders(partition_map, kernel_size=5)
     partition_map = balance_partition_map(partition_map, hazard, seed=seed)
     partition_map = sample_partition_map(partition_map, size=n_samples, seed=seed)
+
+    # Ensure ocean is nan
+    partition_map = partition_map.astype(float)
+    partition_map[np.isnan(elevation)] = np.nan  # Ensure ocean is nan
 
     # Save partition map
     np.save(partition_paths[hazard_name], partition_map)

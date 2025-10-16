@@ -13,7 +13,7 @@ conda activate HazardMapper
 hazard="flood"
 
 # Preprocess the data
-python HazardMapper/preprocess.py
+python HazardMapper/preprocess.py --variables #--labels
 # Make Partition Map
 python HazardMapper/partition.py -z $hazard
 # Downscale Maps

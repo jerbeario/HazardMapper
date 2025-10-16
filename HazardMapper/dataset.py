@@ -82,7 +82,7 @@ var_paths = {
 }
 
 
-# Hazard Maps 
+# Hazard Maps
 hazard_map_paths = {
     # Statistical
     "drought" : f"{input_path}/npy_arrays/masked_drought_Europe.npy",
@@ -91,7 +91,7 @@ hazard_map_paths = {
     "volcano" : f"{input_path}/npy_arrays/masked_volcano_Europe.npy",
     "earthquake" : f"{input_path}/npy_arrays/masked_earthquake_Europe.npy",
     
-    # Deep earning
+    # Deep Learning
     "wildfire" : f"{output_path}/wildfire/hazard_map/SimpleCNN_wildfire_hazard_map.npy",
     "flood" : f"{output_path}/flood/hazard_map/SimpleCNN_flood_hazard_map.npy",
     "landslide" : f"{output_path}/landslide/hazard_map/SimpleCNN_landslide_hazard_map.npy",

@@ -22,6 +22,7 @@ import cartopy.feature as cfeature
 
 from PIL import Image
 
+
 from sklearn.preprocessing import MinMaxScaler, LabelEncoder
 from HazardMapper.dataset import var_paths, raw_paths, label_paths, partition_paths
 
@@ -79,7 +80,7 @@ def make_water_mask(downsample_factor=1):
     np.save(f"Input/Europe/npy_arrays/water_mask_{downsample_factor}x.npy", water_mask)
     return water_mask
 
-def plot_npy_arrays(npy_file, name, type, title = "", debug_nans=False, log=False, water=False, downsample_factor=10, downsample_factor_watermask=10, save_path=None, cmap='viridis', labels=None, extent=None, logger=None):
+def plot_npy_arrays(npy_data, name=None, type=None, title = "", debug_nans=False, log=False, water=False, show=False, downsample_factor=10, downsample_factor_watermask=10, save_path=None, cmap='viridis', labels=None, extent=None, logger=None):
     """
     Plots the data from npy files on a map with the correct coordinates.
 
@@ -107,6 +108,23 @@ def plot_npy_arrays(npy_file, name, type, title = "", debug_nans=False, log=Fals
     if logger is None:
         logger = print
 
+    if name is None:
+        name = infer_name_from_path(npy_data)
+        logger(f"Inferred name: {name}")
+
+    if isinstance(npy_data, str):
+        npy_data = np.load(npy_data)
+    elif not isinstance(npy_data, np.ndarray):
+        raise ValueError("Input must be a file path or a numpy array.")
+    
+    if type is None:
+        type = infer_type(npy_data, name)
+        logger(f"Inferred type: {type}, if this is incorrect, please specify the type manually.")
+
+    if title == "":
+        title = infer_title_from_name(name, type)
+        logger(f"Inferred title: {title}")
+
     logger(f"Plotting {name}...")
 
     # Define the extent for the map (longitude and latitude bounds)
@@ -120,35 +138,36 @@ def plot_npy_arrays(npy_file, name, type, title = "", debug_nans=False, log=Fals
     # Create a subplot with PlateCarree projection
     fig, axs = plt.subplots(figsize=(8, 8), subplot_kw={'projection': ccrs.PlateCarree()})
 
-    if isinstance(npy_file, str):
-        npy_data = np.load(npy_file)
-
-    elif isinstance(npy_file, np.ndarray):
-        npy_data = npy_file
+    
 
     if downsample_factor > 1:
         npy_data = npy_data[::downsample_factor, ::downsample_factor]
-        logger(f"Downsampled data shape: {npy_data.shape}")
+        logger(f"Downsampled to shape: {npy_data.shape}")
 
     if log:
         npy_data = np.log1p(npy_data)
+        logger("Applied log transformation to data")
 
     if debug_nans:
         # set everything to 0 except for NaNs
         npy_data[~np.isnan(npy_data)] = 0
         npy_data[np.isnan(npy_data)] = 1
+        logger("Debugging NaNs: set non-NaN values to 0 and NaNs to 1")
 
+    if type == 'hazard':
+        npy_data[npy_data > 0] = 1
+        logger("Converted data to binary (0 and 1)")
+   
+  
 
     # Plot the data on the subplot grid
     im = axs.imshow(npy_data, cmap=cmap, extent=extent)
     logger("image created")
     if water:
-        logger("Adding water mask")
         water_mask = make_water_mask(downsample_factor=downsample_factor_watermask)
-        logger(f"Water mask shape: {water_mask.shape}")
         custom_blue_cmap = ListedColormap(['none', '#A6CAE0'])
         axs.imshow(water_mask, cmap=custom_blue_cmap, extent=extent, transform=ccrs.PlateCarree(), origin='upper')
-        logger("Water mask added")
+        logger(f"Water mask added downsampled by {downsample_factor_watermask}")
 
     # Set title for each subplot
     axs.set_title(title, fontsize=16)
@@ -209,7 +228,17 @@ def plot_npy_arrays(npy_file, name, type, title = "", debug_nans=False, log=Fals
             patches = [mpatches.Patch(color=color, label=labels[i]) for i, color in enumerate(colors)]
             fig.legend(handles=patches, loc='upper center', bbox_to_anchor=(0.53, 0.15),
                         fancybox=True, ncol=len(labels))
-    
+    elif type == 'hazard':
+        # Binary hazard map (0 absence and 1 presence)
+        labels = ['No Hazard', 'Hazard']
+        cmap = plt.get_cmap(cmap, 2)  # Use a colormap with 2 distinct colors
+        colors = [cmap(i) for i in range(cmap.N)]
+        patches =[mpatches.Patch(color=color,label=labels[i]) for i, color in enumerate(colors)]
+        fig.legend(handles=patches, loc='upper center', bbox_to_anchor=(0.53, 0.15), fancybox=True, ncol=2)
+
+
+
+
     else:
         raise ValueError("Invalid type. Choose from 'continuous', 'partition', 'bins', or 'categorical'.")
 
@@ -217,8 +246,8 @@ def plot_npy_arrays(npy_file, name, type, title = "", debug_nans=False, log=Fals
     if save_path is not None:
         plt.savefig(save_path, dpi=100, bbox_inches='tight')
         plt.close(fig)  # Close the figure to free up memory
-
-    # plt.show()  # Show the plot
+    if show:
+        plt.show()  # Show the plot
 
 
 def plot_maps_grid(
@@ -426,11 +455,111 @@ def normalize_label(hazard_map, threshold=0.99, logger=None):
 
     return normalized_map
 
+def infer_name_from_path(data):
+    """
+    Infers a human-readable, title-cased name from a file path.
+
+    Parameters
+    ----------
+    data : str or np.ndarray
+        File path to infer the name from. If a numpy array is provided,
+        returns "Array".
+
+    Returns
+    -------
+    str
+        Inferred human-readable name (each word capitalized).
+    """
+    if isinstance(data, np.ndarray):
+        print("⚠️ Input is a NumPy array. Returning 'Array' as name.")
+        return "Array"
+    if not isinstance(data, str):
+        raise TypeError(f"Expected str or np.ndarray, got {type(data)}")
+
+    # Extract filename without extension
+    name = os.path.splitext(os.path.basename(data))[0]
+
+    # Clean known prefixes and patterns
+    replacements = {
+        "_": " ",
+        "masked ": "",
+        "flat ": "",
+        # "preprocessed ": "",
+        "Europe ": "",
+        "Europe": "",
+        "downscaled": "",
+
+
+    }
+    for old, new in replacements.items():
+
+        name = name.replace(old, new)
+
+    return name.strip().title()
+
+def infer_title_from_name(name, type):
+    """
+    Infer a title for the plot based on the data path.
+
+    Parameters:
+    npy_file: str or np.ndarray
+        Path to the .npy file or a numpy array.
+
+    Returns:
+    str: Inferred title for the plot.
+    """
+    if type == 'continuous' or type == 'categorical' or type == 'hazard':
+        title = f"European {name} Map"
+    elif type == 'partition':
+        title = f"European {name} Partition Map"
+    elif type == 'bins':
+        title = f"European {name} Susceptibility Map"
+    elif type == 'hazard':
+        title = f"European {name} Map"
+    else:
+        raise ValueError("Invalid type. Choose from 'continuous', 'partition', 'bins', or 'categorical'.")
+
+
+    return title
+
+def infer_type(data, name):
+    """
+    Infer the type of data in a numpy array based on its unique values.
+
+    Parameters:
+    npy_file: str or np.ndarray
+        Path to the .npy file or a numpy array.
+
+    Returns:
+    str: 'continuous', 'partition', 'bins', or 'categorical'
+    """
+    unique_values = np.unique(data[~np.isnan(data)])  # Exclude NaNs
+
+    if name in ['Flood', 'Landslide', 'Wildfire']:
+        return 'hazard'
+    if len(unique_values) > 200:
+        return 'continuous'
+    elif set(unique_values).issubset({0, 1, 2, 3, 4}):
+        return 'partition'
+    elif set(unique_values).issubset({1, 2, 3, 4, 5}):
+        return 'bins'
+    else:
+        return 'categorical'
+    
+def infer_downscaled(path):
+    """
+    Infer if the data is downscaled based on its filename.
+
+    """
+    filename = os.path.basename(path)
+    return 'downscaled' in filename.lower()
+
 if __name__ == "__main__":
     # Make argparse to choose which utility to run
     parser = argparse.ArgumentParser(description="Downscale hazard maps")
     parser.add_argument('--plot_grid', action='store_true', help="Plot a grid of maps")
     parser.add_argument("--downscale", action="store_true", help="Downscale the maps")
+    parser.add_argument('--plot', type=str, help="Path to the .npy file to plot")
     
     args = parser.parse_args()
 
@@ -501,4 +630,14 @@ if __name__ == "__main__":
             nrows=4,
             ncols=4,
             save_path="Output/Maps/conditioning_factors_grid.png",
+        )
+
+    if args.plot:
+        print(args.plot)
+        plot_npy_arrays(
+            args.plot,
+            # water=True,
+            downsample_factor=1 if infer_downscaled(args.plot) else 10,
+            downsample_factor_watermask=10,
+            show=True,
         )
