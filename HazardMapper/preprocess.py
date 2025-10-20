@@ -95,7 +95,7 @@ if __name__ == "__main__":
 
     # List of all variable names to process
     encode_vars = ['landcover', 'HWSD', 'GLIM'] # Categorical variables to label encode
-    log_vars = ['elevation', 'slope'] # Variables to log transform
+    log_vars = ['elevation', 'slope', 'accuflux', 'curvature'] # Variables to log transform
     norm_vars = ['soil_moisture_root', 'soil_moisture_surface', 'NDVI', 
                  'wind_direction_daily', 'wind_speed_daily', 'temperature_daily', 
                  'precipitation_daily', 'fire_weather', 'pga', 'accuflux', 'coastlines',
