@@ -1170,6 +1170,27 @@ class ModelMgr:
             wandb.save(true_path)
         except Exception:
             self.logger.debug("wandb logging/saving in evaluate() failed")
+        
+        if model_mgr.sweep_set:
+            new_row = pd.DataFrame([{
+                'Model': model_name,
+                'Experiment': self.experiement_name,
+                "n_layers": wandb.config.n_layers,
+                "filters": wandb.config.filters,
+                "learning_rate": wandb.config.learning_rate,
+                "drop_value": wandb.config.drop_value,
+                "weight_decay": wandb.config.weight_decay,
+                'Accuracy': metrics['Accuracy'],
+                'Precision': metrics['Precision'],
+                'Recall': metrics['Recall'],
+                'F1': metrics['F1'],
+                'AUROC': metrics['AUROC'],
+                'AP': metrics['AP'],
+                'MAE': metrics['MAE'],
+                'Best_Threshold': best_threshold
+            }])
+            self.hyper_df = pd.concat([self.hyper_df, new_row], ignore_index=True)
+            self.hyper_df.to_csv(f"{self.output_dir}/Sweep_results_Model.csv", index=False)
 
         return metrics
 
@@ -1260,6 +1281,8 @@ class ModelMgr:
         }
         
         # Initialize sweep
+        self.hyper_df = pd.DataFrame(columns=['Model', 'Experiment', "n_layers", "filters", "learning_rate", "drop_value", "weight_decay",
+                                              'Accuracy', 'Precision', 'Recall', 'F1', 'AUROC', 'AP', 'MAE', 'Best_Threshold'], dtype=float)
         sweep_id = wandb.sweep(
             sweep_config, 
             project=f"{self.hazard}_{self.architecture}_sweep"
@@ -1288,7 +1311,22 @@ class ModelMgr:
             self.logger.debug("wandb.init() failed or no active run")
 
         # pull effective config
-        cfg = dict(wandb.config) if wandb.run else hparams
+        if wandb.run:
+            self.logger.info("THIS SHOULD BE A SWEEP RUN")
+            cfg = dict(wandb.config)
+        elif os.path.exists(f"{self.output_dir}/Sweep_results_Model.csv"):
+            self.logger.info("PREVIOUS SWEEP FOUND, PULL BEST HPARAMS")
+            df = pd.read_csv(f"{self.output_dir}/Sweep_results_Model.csv")
+            row = df.sort_values(by="MAE", ascending=True).iloc[0]  # "val_loss"
+            hparams['filters'] = int(row['filters'])
+            hparams['n_layers'] = int(row['n_layers'])
+            hparams["learning_rate"] = np.round(row["learning_rate"], 5)
+            hparams["weight_decay"] = np.round(row["weight_decay"], 5)
+            hparams["drop_value"] = np.round(row["drop_value"], 2)
+            cfg = hparams
+        else:
+            self.logger.info("THERE IS NO SAVED SWEEP FILE, SO DEFAULT HPARAMS")
+            cfg = hparams
 
         # build and configure model
         self.hazard_model_instance = self.build_model()
@@ -1396,8 +1434,10 @@ if __name__ == "__main__":
     )
     # Run hyperparameter sweep or single training/evaluation
     if sweep:
+        model_mgr.sweep_set = True
         model_mgr.sweep()
     else:
+        model_mgr.sweep_set = False
         model_mgr.main()
     # If specified, create a hazard map
     if make_map:
