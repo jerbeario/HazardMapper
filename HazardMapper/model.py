@@ -26,7 +26,7 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import (
     accuracy_score, mean_absolute_error, precision_score, recall_score, f1_score, 
     roc_auc_score, precision_recall_curve, 
-    average_precision_score, roc_curve
+    average_precision_score, roc_curve, log_loss
     )
 
 import torch
@@ -1073,6 +1073,7 @@ class ModelMgr:
             'AUROC': roc_auc_score(y_true, y_prob),
             'AP': average_precision_score(y_true, y_prob),
             'MAE': mean_absolute_error(y_true, y_prob),
+            'BCE': log_loss(y_true, y_prob),
             'Best_Threshold': best_threshold
         }
 
@@ -1187,10 +1188,11 @@ class ModelMgr:
                 'AUROC': metrics['AUROC'],
                 'AP': metrics['AP'],
                 'MAE': metrics['MAE'],
+                'BCE': metrics['BCE'],
                 'Best_Threshold': best_threshold
             }])
             self.hyper_df = pd.concat([self.hyper_df, new_row], ignore_index=True)
-            self.hyper_df.to_csv(f"{self.output_dir}/Sweep_results_Model.csv", index=False)
+            self.hyper_df.to_csv(f"{self.output_dir}/Sweep_results_Model_BCE.csv", index=False)
 
         return metrics
 
@@ -1252,7 +1254,7 @@ class ModelMgr:
         sweep_config = {
             'method': 'bayes',  # Use Bayesian optimization
             'metric': {
-                'name': 'val_MAE',
+                'name': 'val_loss',
                 'goal': 'minimize'
             },
             'parameters': {
@@ -1282,7 +1284,7 @@ class ModelMgr:
         
         # Initialize sweep
         self.hyper_df = pd.DataFrame(columns=['Model', 'Experiment', "n_layers", "filters", "learning_rate", "drop_value", "weight_decay",
-                                              'Accuracy', 'Precision', 'Recall', 'F1', 'AUROC', 'AP', 'MAE', 'Best_Threshold'], dtype=float)
+                                              'Accuracy', 'Precision', 'Recall', 'F1', 'AUROC', 'AP', 'MAE', 'BCE', 'Best_Threshold'], dtype=float)
         sweep_id = wandb.sweep(
             sweep_config, 
             project=f"{self.hazard}_{self.architecture}_sweep"
@@ -1298,6 +1300,27 @@ class ModelMgr:
         """
         # merge defaults + overrides
         hparams = self._default_hparams()
+
+        self.logger.info(f"FILTERS: {hparams['filters']}")
+        self.logger.info(f"LAYERS: {hparams['n_layers']}")
+        self.logger.info(f"hparams: {hparams}")
+        self.logger.info(f"LEARNING RATE: {hparams['learning_rate']}")
+
+        if os.path.exists(f"{self.output_dir}/Sweep_results_Model_BCE.csv"):
+            self.logger.info("PREVIOUS SWEEP FOUND, PULL BEST HPARAMS")
+            df = pd.read_csv(f"{self.output_dir}/Sweep_results_Model_BCE.csv")
+            row = df.sort_values(by="BCE", ascending=True).iloc[0]  # "val_loss"
+            hparams['filters'] = int(row['filters'])
+            hparams['n_layers'] = int(row['n_layers'])
+            hparams["learning_rate"] = np.round(row["learning_rate"], 5)
+            hparams["weight_decay"] = np.round(row["weight_decay"], 5)
+            hparams["drop_value"] = np.round(row["drop_value"], 2)
+
+        self.logger.info(f"FILTERS: {hparams['filters']}")
+        self.logger.info(f"LAYERS: {hparams['n_layers']}")
+        self.logger.info(f"LEARNING RATE: {hparams['learning_rate']}")
+
+        self.logger.info(f"CONFIG: {config}")
         if config:
             hparams.update(config)
         # init wandb (safe for both normal + sweep)
@@ -1311,21 +1334,11 @@ class ModelMgr:
             self.logger.debug("wandb.init() failed or no active run")
 
         # pull effective config
-        if wandb.run:
+        if self.sweep_set:
             self.logger.info("THIS SHOULD BE A SWEEP RUN")
             cfg = dict(wandb.config)
-        elif os.path.exists(f"{self.output_dir}/Sweep_results_Model.csv"):
-            self.logger.info("PREVIOUS SWEEP FOUND, PULL BEST HPARAMS")
-            df = pd.read_csv(f"{self.output_dir}/Sweep_results_Model.csv")
-            row = df.sort_values(by="MAE", ascending=True).iloc[0]  # "val_loss"
-            hparams['filters'] = int(row['filters'])
-            hparams['n_layers'] = int(row['n_layers'])
-            hparams["learning_rate"] = np.round(row["learning_rate"], 5)
-            hparams["weight_decay"] = np.round(row["weight_decay"], 5)
-            hparams["drop_value"] = np.round(row["drop_value"], 2)
-            cfg = hparams
         else:
-            self.logger.info("THERE IS NO SAVED SWEEP FILE, SO DEFAULT HPARAMS")
+            self.logger.info("HPARAMS ARE BY DEFAULT OR UPDATED IF SUCCESSFULLY PULLED")
             cfg = hparams
 
         # build and configure model
